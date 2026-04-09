@@ -61,7 +61,7 @@ fprintf('\n');
 %
 %  Joint order: [ankle (1), knee (2), hip (3)]
 
-ctrl.tau_max = [250; 500; 400];
+ctrl.tau_max = [600; 1500; 1200];
 ctrl.t_on    = [0.05; 0.04; 0.03];
 ctrl.t_off   = [0.35; 0.34; 0.33];
 ctrl.k       = 50;
@@ -81,7 +81,7 @@ assert(all(ctrl.t_on < ctrl.t_off), ...
 %  Sketch on paper to confirm posture looks like a squat!
 %  All angular velocities start at zero.
 
-X0_p1 = [0.1; 1.3; -0.6; 0; 0; 0];
+X0_p1 = [-0.1; 0.6; -1.1; 0; 0; 0]; 
 % theta0  = [0.3;  0.3;  0.8];
 % dtheta0 = [0.0;  0.0;  0.0];
 % X0_p1   = [theta0; dtheta0];
@@ -170,6 +170,15 @@ fprintf('NEW M:\n'); disp(M_new);
 ddq_grav_new = M_new \ (-[G1;G2;G3]);
 fprintf('NEW ddtheta from gravity only: [%.2f, %.2f, %.2f] rad/s^2\n', ddq_grav_new);
 
+% Compute COM Jacobian y-row to find correct torque signs
+a1=phi1; a2=phi2; a3=phi3;
+Jcom_y = -(m1*d1*sin(a1) + m2*(L1*sin(a1)+d2*sin(a2)) + ...
+            m3*(L1*sin(a1)+L2*sin(a2)+d3*sin(a3))) / (m1+m2+m3);
+Jcom_y2= -(m2*d2*sin(a2) + m3*(L2*sin(a2)+d3*sin(a3))) / (m1+m2+m3);
+Jcom_y3= -(m3*d3*sin(a3)) / (m1+m2+m3);
+fprintf('COM Jacobian y-row: [%.4f, %.4f, %.4f]\n', Jcom_y, Jcom_y2, Jcom_y3);
+fprintf('For upward COM motion, torques should have same sign as Jcom_y entries\n');
+
 %% 4. PHASE 1: TOE-PINNED PUSH-OFF
 
 t_span1 = [0, 1.0];   % allow up to 0.6 s for push-off
@@ -198,6 +207,23 @@ fprintf('Max angular velocity dtheta1: %.4f rad/s\n', max(abs(X1(:,4))));
 fprintf('Max angular velocity dtheta2: %.4f rad/s\n', max(abs(X1(:,5))));
 fprintf('Max angular velocity dtheta3: %.4f rad/s\n', max(abs(X1(:,6))));
 
+% Check vy at liftoff
+[~, vy_check] = compute_com_velocity(X1(end,:)', params);
+fprintf('vy at liftoff: %.4f m/s\n', vy_check);
+fprintf('theta1 at liftoff: %.4f rad (%.1f deg)\n', X1(end,1), rad2deg(X1(end,1)));
+
+% Plot COM velocity during push-off
+figure('Name','COM velocity during push-off');
+vy_hist = zeros(length(t1),1);
+for ii=1:length(t1)
+    [~,vy_hist(ii)] = compute_com_velocity(X1(ii,:)', params);
+end
+plot(t1, vy_hist, 'b-', 'LineWidth', 2);
+yline(0,'r--');
+xlabel('Time (s)'); ylabel('vy COM (m/s)');
+title('Vertical COM velocity during push-off');
+grid on;
+
 %% 5. LIFTOFF STATE & PHASE 2 INITIAL CONDITIONS 
 
 X_lo = X1(end, :)';   % state at liftoff
@@ -217,13 +243,12 @@ fprintf('Liftoff COM velocity: (%.4f, %.4f) m/s\n', vx_com_lo, vy_com_lo);
 
 % Phase-2 state: [x_com; y_com; theta1; theta2; theta3;
 %                 vx_com; vy_com; dtheta1; dtheta2; dtheta3]
-X0_p2 = [x_com_lo;
-          y_com_lo;
-          X_lo(1:3);        % segment angles carry over unchanged
-          vx_com_lo;
-          vy_com_lo;
-          X_lo(4:6)];       % angular velocities carry over unchanged
+X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; X_lo(4:6)];
+% segment angles carry over unchanged & angular velocities carry over unchanged
 
+% Zero out angular velocities in flight for cleaner animation
+% Segments hold liftoff pose during flight (reasonable simplification)
+% X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; 0; 0; 0];
 
 %% 6. PHASE 2: FREE-BODY FLIGHT 
 
@@ -244,7 +269,7 @@ if isempty(te2)
     % Fall back: use maximum y_com in trajectory
     jump_height = max(X2(:,2)) - y_com_lo;
 else
-    jump_height = X2(end,2) - y_com_lo;
+    jump_height = max(X2(:,2)) - y_com_lo;
 end
 
 
@@ -286,23 +311,35 @@ legend('Trajectory','Liftoff','Peak'); axis equal; grid on;
 %%  EVENT FUNCTIONS
 %  (defined here as local functions so run_simulation.m is self-contained)
 
-function [val, isterminal, direction] = liftoff_event(t, X, params, ctrl)  %#ok<INUSL>
-% Liftoff when foot angle reaches 80 degrees (foot becomes horizontal)
-    val        = (pi/2 - 0.17) - X(1);
+function [val, isterminal, direction] = liftoff_event(t, X, params, ctrl)
+% Liftoff when vertical COM velocity becomes positive
+% i.e. the model is actually moving upward
+    dX      = jump_ode_phase1(t, X, params, ctrl);
+    ddtheta = dX(4:6);
+    a1=X(1); a2=X(1)+X(2); a3=X(1)+X(2)+X(3);
+    dp1=X(4); dp2=X(4)+X(5); dp3=X(4)+X(5)+X(6);
+    ddp1=ddtheta(1); ddp2=ddtheta(1)+ddtheta(2); ddp3=ddtheta(1)+ddtheta(2)+ddtheta(3);
+    m1=params.m1; m2=params.m2; m3=params.m3;
+    L1=params.L1; L2=params.L2;
+    d1=params.d1; d2=params.d2; d3=params.d3;
+    M_tot=m1+m2+m3;
+    ay1=-ddp1*d1*sin(a1)-dp1^2*d1*cos(a1);
+    ay2=-ddp1*L1*sin(a1)-dp1^2*L1*cos(a1)-ddp2*d2*sin(a2)-dp2^2*d2*cos(a2);
+    ay3=-ddp1*L1*sin(a1)-dp1^2*L1*cos(a1)-ddp2*L2*sin(a2)-dp2^2*L2*cos(a2) ...
+        -ddp3*d3*sin(a3)-dp3^2*d3*cos(a3);
+    ay_com=(m1*ay1+m2*ay2+m3*ay3)/M_tot;
+    GRF_y = M_tot*(params.g + ay_com);
+    val        = GRF_y;
     isterminal = 1;
     direction  = -1;
 end
 
 
 function [val, isterminal, direction] = peak_height_event(t, X)  %#ok<INUSL>
-% PEAK_HEIGHT_EVENT  Stop phase 2 when vertical COM velocity → 0
-%
-% X(7) = vy_com.  At peak height vy_com passes through zero
-% from positive (ascending) to negative (descending).
-
-    val        = X(7);   % vy_com = 0 at peak
-    isterminal = 1;
-    direction  = -1;     % ascending → descending
+% Stop when model lands (y_com returns to liftoff height) or 2s elapsed
+    val=X(2) - 0.1;   % stop when COM drops below 0.1m (near ground)
+    isterminal=1;
+    direction=-1;
 end
 
 
@@ -311,42 +348,31 @@ end
 %  The wrappers below simply forward the calls.
 
 function [x_com, y_com] = compute_com_position(X, params)
-    % Forward to helper in jump_ode_phase1.m
-    % MATLAB finds it automatically if both files are on the path.
-    %
-    % If you get a "not found" error, move the helper functions into
-    % a +helpers/ package folder and call helpers.compute_com_position().
-
-    phi1 = X(1); phi2 = X(1)+X(2); phi3 = X(1)+X(2)+X(3);
-    m1=params.m1; m2=params.m2; m3=params.m3; mHAT=0;
-    L1=params.L1; L2=params.L2; L3=params.L3;
+    a1=X(1); a2=X(1)+X(2); a3=X(1)+X(2)+X(3);
+    m1=params.m1; m2=params.m2; m3=params.m3;
+    L1=params.L1; L2=params.L2;
     d1=params.d1; d2=params.d2; d3=params.d3;
-    M_tot = m1+m2+m3+mHAT;
-
-    x1=d1*sin(phi1);                               y1=d1*cos(phi1);
-    x2=L1*sin(phi1)+d2*sin(phi2);                  y2=L1*cos(phi1)+d2*cos(phi2);
-    x3=L1*sin(phi1)+L2*sin(phi2)+d3*sin(phi3);     y3=L1*cos(phi1)+L2*cos(phi2)+d3*cos(phi3);
-    xH=L1*sin(phi1)+L2*sin(phi2)+L3*sin(phi3);     yH=L1*cos(phi1)+L2*cos(phi2)+L3*cos(phi3);
-
-    x_com=(m1*x1+m2*x2+m3*x3+mHAT*xH)/M_tot;
-    y_com=(m1*y1+m2*y2+m3*y3+mHAT*yH)/M_tot;
+    M_tot=m1+m2+m3;
+    x1=d1*sin(a1);                                y1=d1*cos(a1);
+    x2=L1*sin(a1)+d2*sin(a2);                     y2=L1*cos(a1)+d2*cos(a2);
+    x3=L1*sin(a1)+L2*sin(a2)+d3*sin(a3);          y3=L1*cos(a1)+L2*cos(a2)+d3*cos(a3);
+    x_com=(m1*x1+m2*x2+m3*x3)/M_tot;
+    y_com=(m1*y1+m2*y2+m3*y3)/M_tot;
 end
 
 function [vx_com, vy_com] = compute_com_velocity(X, params)
-    phi1=X(1); phi2=X(1)+X(2); phi3=X(1)+X(2)+X(3);
-    dp1=X(4);  dp2=X(4)+X(5);  dp3=X(4)+X(5)+X(6);
-    m1=params.m1; m2=params.m2; m3=params.m3; mHAT=0;
-    L1=params.L1; L2=params.L2; L3=params.L3;
+    a1=X(1); a2=X(1)+X(2); a3=X(1)+X(2)+X(3);
+    dp1=X(4); dp2=X(4)+X(5); dp3=X(4)+X(5)+X(6);
+    m1=params.m1; m2=params.m2; m3=params.m3;
+    L1=params.L1; L2=params.L2;
     d1=params.d1; d2=params.d2; d3=params.d3;
-    M_tot=m1+m2+m3+mHAT;
-
-    vx1= d1*dp1*cos(phi1);                                          vy1=-d1*dp1*sin(phi1);
-    vx2= L1*dp1*cos(phi1)+d2*dp2*cos(phi2);                        vy2=-L1*dp1*sin(phi1)-d2*dp2*sin(phi2);
-    vx3= L1*dp1*cos(phi1)+L2*dp2*cos(phi2)+d3*dp3*cos(phi3);       vy3=-L1*dp1*sin(phi1)-L2*dp2*sin(phi2)-d3*dp3*sin(phi3);
-    vxH= L1*dp1*cos(phi1)+L2*dp2*cos(phi2)+L3*dp3*cos(phi3);       vyH=-L1*dp1*sin(phi1)-L2*dp2*sin(phi2)-L3*dp3*sin(phi3);
-
-    vx_com=(m1*vx1+m2*vx2+m3*vx3+mHAT*vxH)/M_tot;
-    vy_com=(m1*vy1+m2*vy2+m3*vy3+mHAT*vyH)/M_tot;
+    M_tot=m1+m2+m3;
+    vx1= d1*dp1*cos(a1);                          vy1=-d1*dp1*sin(a1);
+    vx2= L1*dp1*cos(a1)+d2*dp2*cos(a2);           vy2=-L1*dp1*sin(a1)-d2*dp2*sin(a2);
+    vx3= L1*dp1*cos(a1)+L2*dp2*cos(a2)+d3*dp3*cos(a3);
+    vy3=-L1*dp1*sin(a1)-L2*dp2*sin(a2)-d3*dp3*sin(a3);
+    vx_com=(m1*vx1+m2*vx2+m3*vx3)/M_tot;
+    vy_com=(m1*vy1+m2*vy2+m3*vy3)/M_tot;
 end
 
 function ay_com = compute_com_accel_y(X, ddtheta, params)
@@ -370,7 +396,8 @@ end
 
 function tau = compute_torques(t, ctrl)
     k=ctrl.k;
-    sig_on =1./(1+exp(-k.*(t-ctrl.t_on)));
+    sig_on=1./(1+exp(-k.*(t-ctrl.t_on)));
     sig_off=1./(1+exp(-k.*(t-ctrl.t_off)));
-    tau=ctrl.tau_max.*(sig_on-sig_off);
+    tau_sign = [-1; -1; 1];
+    tau=tau_sign .* ctrl.tau_max.*(sig_on-sig_off);
 end

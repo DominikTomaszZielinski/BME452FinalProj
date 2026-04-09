@@ -142,7 +142,7 @@ function tau = compute_torques(t, ctrl)
 k      = ctrl.k;
 sig_on = 1./(1+exp(-k.*(t-ctrl.t_on)));
 sig_off= 1./(1+exp(-k.*(t-ctrl.t_off)));
-tau_sign = [1; -1; -1];
+tau_sign = [-1; -1; 1];
 tau    = tau_sign .* ctrl.tau_max .* (sig_on - sig_off);
 end
 

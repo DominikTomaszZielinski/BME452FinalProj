@@ -30,7 +30,7 @@ params.I2   = params.m2 * (0.302 * params.L2)^2;
 params.I3   = params.m3 * (0.323 * params.L3)^2;
 
 %% ?? Initial Conditions ???????????????????????????????????????????????
-X0 = [0.1; 1.3; -0.6; 0; 0; 0];
+X0 = [-0.1; 0.6; -1.1; 0; 0; 0];
 
 %% Zero torque test — model should just slowly fall under gravity
 ctrl_zero.tau_max = [0; 0; 0];
@@ -89,16 +89,17 @@ fprintf('det(M) = %.6f\n\n', det(M_mat));
 fprintf('--- Torque scaling sweep ---\n');
 fprintf('%-10s %-15s %-15s %-10s\n', 'Scale','Max vy (m/s)','Final phi1 (deg)','Crashed?');
 
-base_tau = [50; 100; 80];   % base torques to scale
+base_tau = [20; 50; 40];   % base torques to scale
 
-for scale = [5.0, 8.0, 10.0, 15.0, 20.0]
+for scale = [20, 25, 30, 35, 40, 50]
 
     ctrl.tau_max = scale * base_tau;
     ctrl.t_on    = [0.05; 0.03; 0.01];
     ctrl.t_off   = [0.35; 0.33; 0.30];
     ctrl.k       = 15;
 
-    opts = odeset('RelTol',1e-3,'AbsTol',1e-4,'MaxStep',1e-3,'NormControl','on','Events',@angle_limit_event);
+    opts = odeset('RelTol',1e-3,'AbsTol',1e-4,'MaxStep',1e-3,...
+              'NormControl','on','Events',@angle_limit_event);
     try
         [t,X] = ode45(@(t,X) jump_ode_phase1(t,X,params,ctrl),...
                       [0, 1.0], X0, opts);
@@ -126,7 +127,7 @@ end
 
 %% ?? Detailed Run at a Chosen Scale ??????????????????????????????????
 % Once you see a scale that gives vy ? 2-3 m/s above, set it here:
-chosen_scale = 0.1;   % <-- adjust this after reading sweep output
+chosen_scale = 20;   % <-- adjust this after reading sweep output
 
 ctrl.tau_max = chosen_scale * base_tau;
 ctrl.t_on    = [0.05; 0.03; 0.01];
@@ -170,8 +171,7 @@ ylabel('Angle (deg)'); xlabel('Time (s)');
 title('Joint Angles'); grid on;
 
 function [val, isterminal, direction] = angle_limit_event(t, X)  %#ok<INUSL>
-% Stop if foot angle exceeds 80 degrees (pi/2 singularity approaching)
-    val        = pi/2 - 0.17 - X(1);   % triggers when phi1 > ~80 deg
+    val        = (pi/2 - 0.17) - X(1);
     isterminal = 1;
     direction  = -1;
 end
