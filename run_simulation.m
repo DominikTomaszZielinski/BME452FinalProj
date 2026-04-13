@@ -54,37 +54,34 @@ fprintf('\n');
 %% 2. CONTROL PARAMETERS  (starting guess — BOTorch tunes these)
 %
 %  Sigmoidal torque profile per joint:
-%    tau_i(t) = tau_max_i * [sig(t, t_on_i) - sig(t, t_off_i)]
+%    tau_i(t) = tau_max_i * [sig(t, t_on_i) - sig(t, t_on_i + t_dur_i)]
 %
-%  9 optimisable parameters: tau_max(3), t_on(3), t_off(3)
+%  12 optimisable parameters:
+%    theta0(3)  : initial joint angles
+%    tau_max(3) : peak torques
+%    t_on(3)    : activation onset times
+%    t_dur(3)   : activation durations
 %  k is a fixed sharpness constant (not optimised).
 %
 %  Joint order: [ankle (1), knee (2), hip (3)]
 
 ctrl.tau_max = [600; 1500; 1200];
 ctrl.t_on    = [0.05; 0.04; 0.03];
-ctrl.t_off   = [0.35; 0.34; 0.33];
+ctrl.t_dur   = [0.30; 0.30; 0.30];   % duration instead of t_off
 ctrl.k       = 50;
 
 % Quick sanity check: t_on must be before t_off for each joint
-assert(all(ctrl.t_on < ctrl.t_off), ...
-    'Control error: t_on must be less than t_off for all joints.');
+assert(all(ctrl.t_dur > 0), 'Control error: t_dur must be positive.');
 
 
 %% 3. INITIAL CONDITIONS  (crouched squat posture)
 %
-%  Relative angles (radians):
-%    theta1 =  0.0  -> foot approximately vertical
-%    theta2 =  1.2  -> knee bent (~69 deg), shank tilted forward from foot
-%    theta3 = -1.8  -> hip bent (~103 deg), thigh tilted back from shank
-%
-%  Sketch on paper to confirm posture looks like a squat!
+%  theta0 = [theta1, theta2, theta3] — also optimised by BOTorch
+%  Bounds: theta1 in [-1.5, 0], theta2 in [0.5, 2.5], theta3 in [-2.5, -0.5]
 %  All angular velocities start at zero.
 
-X0_p1 = [-0.1; 0.6; -1.1; 0; 0; 0]; 
-% theta0  = [0.3;  0.3;  0.8];
-% dtheta0 = [0.0;  0.0;  0.0];
-% X0_p1   = [theta0; dtheta0];
+theta0 = [-0.1; 0.6; -1.1];   % current baseline — BOTorch will tune this
+X0_p1  = [theta0; 0; 0; 0];
 
 %% ENERGY CHECK AT t=0
 phi1=X0_p1(1); phi2=X0_p1(1)+X0_p1(2); phi3=X0_p1(1)+X0_p1(2)+X0_p1(3);
@@ -106,7 +103,7 @@ G3 = g*m3*d3*sin(phi3);
 fprintf('G vector at t=0: [%.4f, %.4f, %.4f] N.m\n', G1, G2, G3);
 
 % Initial torques at t=0
-tau0 = ctrl.tau_max .* [1;-1;1] .* (1./(1+exp(-ctrl.k*(0-ctrl.t_on))) - 1./(1+exp(-ctrl.k*(0-ctrl.t_off))));
+tau0 = [-1;-1;1] .* ctrl.tau_max .* (1./(1+exp(-ctrl.k*(0-ctrl.t_on))) - 1./(1+exp(-ctrl.k*(0-(ctrl.t_on+ctrl.t_dur)))));
 fprintf('Tau at t=0: [%.6f, %.6f, %.6f] N.m\n', tau0(1), tau0(2), tau0(3));
 
 % What ddtheta does M\(tau-G) give at t=0?
@@ -395,9 +392,78 @@ function ay_com = compute_com_accel_y(X, ddtheta, params)
 end
 
 function tau = compute_torques(t, ctrl)
-    k=ctrl.k;
-    sig_on=1./(1+exp(-k.*(t-ctrl.t_on)));
-    sig_off=1./(1+exp(-k.*(t-ctrl.t_off)));
+    k        = ctrl.k;
+    sig_on   = 1./(1+exp(-k.*(t - ctrl.t_on)));
+    sig_off  = 1./(1+exp(-k.*(t - (ctrl.t_on + ctrl.t_dur))));
     tau_sign = [-1; -1; 1];
-    tau=tau_sign .* ctrl.tau_max.*(sig_on-sig_off);
+    tau      = tau_sign .* ctrl.tau_max .* (sig_on - sig_off);
+end
+
+function jump_height = simulate_jump(params_vec, params)
+% SIMULATE_JUMP  Wrapper for BOTorch optimisation
+%
+% params_vec: 12-element vector
+%   [1:3]  theta0   - initial joint angles (rad)
+%   [4:6]  tau_max  - peak torques (Nm)
+%   [7:9]  t_on     - activation onset times (s)
+%   [10:12] t_dur   - activation durations (s)
+%
+% Returns jump_height (m) — the scalar BOTorch maximises.
+
+% Unpack
+theta0  = params_vec(1:3);
+tau_max = params_vec(4:6);
+t_on    = params_vec(7:9);
+t_dur   = params_vec(10:12);
+
+% Build ctrl
+ctrl.tau_max = tau_max;
+ctrl.t_on    = t_on;
+ctrl.t_dur   = t_dur;
+ctrl.k       = 50;
+
+% Build initial conditions
+X0_p1 = [theta0; 0; 0; 0];
+
+% Feasibility check — COM must be above ground
+[~, y_com_init] = compute_com_position(X0_p1, params);
+if y_com_init <= 0
+    jump_height = 0;
+    return;
+end
+
+% Phase 1: push-off
+opts1 = odeset('RelTol',1e-6,'AbsTol',1e-8,'MaxStep',1e-4,...
+    'Events',@(t,X) liftoff_event(t,X,params,ctrl));
+try
+    [t1,X1,te1] = ode15s(@(t,X) jump_ode_phase1(t,X,params,ctrl),...
+        [0,1.0], X0_p1, opts1);
+catch
+    jump_height = 0; return;
+end
+
+if isempty(te1) || te1 < 0.005
+    jump_height = 0; return;
+end
+
+% Liftoff state
+X_lo = X1(end,:)';
+[x_com_lo, y_com_lo] = compute_com_position(X_lo, params);
+[vx_com_lo, vy_com_lo] = compute_com_velocity(X_lo, params);
+
+if vy_com_lo <= 0
+    jump_height = 0; return;
+end
+
+% Phase 2: flight
+X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; 0; 0; 0];
+opts2 = odeset('RelTol',1e-8,'AbsTol',1e-10,'MaxStep',1e-3);
+try
+    [~,X2] = ode45(@(t,X) jump_ode_phase2(t,X,params),...
+        [te1, te1+2.0], X0_p2, opts2);
+catch
+    jump_height = 0; return;
+end
+
+jump_height = max(X2(:,2)) - y_com_lo;
 end

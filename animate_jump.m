@@ -45,7 +45,7 @@ params.I3   = params.m3 * (0.323 * params.L3)^2;
 % Control parameters
 ctrl.tau_max = [600; 1500; 1200];
 ctrl.t_on    = [0.05; 0.04; 0.03];
-ctrl.t_off   = [0.35; 0.34; 0.33];
+ctrl.t_dur   = [0.30; 0.30; 0.30];   % duration instead of t_off
 ctrl.k       = 50;
 
 % Initial conditions
@@ -54,6 +54,7 @@ ctrl.k       = 50;
 % phi3=0.0+0.8=0.8 ? thigh bent forward ~46 deg
 % At these 3 conditions, liftoff not detected. 0.0, 1.2, and -1.8 b4
 X0_p1 = [-0.1; 0.6; -1.1; 0; 0; 0]; 
+X0_p1 = [-1; 2.0; -2.3; 0; 0; 0];
 
 t_span1 = [0, 1.0];   % allow up to 0.6 s for push-off
 
@@ -77,11 +78,11 @@ X_lo = X1(end,:)';
 [vx_com_lo, vy_com_lo] = compute_com_velocity(X_lo, params);
 
 % Keep angle trajectories
-X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; X_lo(4:6)];
+%X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; X_lo(4:6)];
 
 % Zero out angular velocities in flight for cleaner animation
 % Segments hold liftoff pose during flight (reasonable simplification)
-% X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; 0; 0; 0];
+X0_p2 = [x_com_lo; y_com_lo; X_lo(1:3); vx_com_lo; vy_com_lo; 0; 0; 0];
 
 % Phase 2: free flight
 opts2 = odeset('RelTol',1e-8,'AbsTol',1e-10,...
@@ -566,9 +567,9 @@ function ay_com = compute_com_accel_y(X, ddtheta, params)
 end
 
 function tau = compute_torques(t, ctrl)
-    k=ctrl.k;
-    sig_on=1./(1+exp(-k.*(t-ctrl.t_on)));
-    sig_off=1./(1+exp(-k.*(t-ctrl.t_off)));
+    k        = ctrl.k;
+    sig_on   = 1./(1+exp(-k.*(t - ctrl.t_on)));
+    sig_off  = 1./(1+exp(-k.*(t - (ctrl.t_on + ctrl.t_dur))));
     tau_sign = [-1; -1; 1];
-    tau=tau_sign .* ctrl.tau_max.*(sig_on-sig_off);
+    tau      = tau_sign .* ctrl.tau_max .* (sig_on - sig_off);
 end
