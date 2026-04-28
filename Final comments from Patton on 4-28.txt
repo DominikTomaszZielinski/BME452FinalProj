@@ -1,0 +1,19 @@
+Force-length and Force-velocity profiles of muscles. You can make an estimate of torque vs angle/torque vs angular velocity using consideration of all muscles
+Guesstimate the force-length relationship to see what the max force should be at each point.
+What is the limit? Can I have a ramp up with a torque  
+Given the torque profiles, how high can you jump. 
+Maybe jump height depends on starting position?
+If I give you an initial condition, how high can you jump based on the timing.
+Countermovement: If I want to jump, the best starting position is standing straight up, then going down, and as you are going down you turn on the muscles and use the spring like properties of muscle of improve the force production.
+Markus Pandi University of texas parameter optimization
+Get rid of some of these. Get rid of some problems associated with bayesian.
+Can you make this simpler, and can you turn it into a question you can answer.
+Get rid of inital conditions. Start in the starting position. Stay away from counter movement if you can. 
+Counter movement jump - Zajac countermovement jump: https://pubmed.ncbi.nlm.nih.gov/2292598/
+          Whatever you do, do not try to imiate this paper
+
+2 problems people have --> How high can you get. I do not want to fall.
+Do not make it a hump. Turn things on maximally. Timing you keep it, and just go until the simulation ends. Do not make it a hump, make it a step.
+Turn it on maximum, and then you have an assumed strength limit.
+
+Steps. Take out start and time length, and have muscles set to maximal. Also take out gradual muscle strength increases, and instead make it a step increase. Then optimize for starting position.
