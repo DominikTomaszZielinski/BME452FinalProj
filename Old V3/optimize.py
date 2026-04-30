@@ -66,6 +66,7 @@ Requirements:
 import numpy as np
 import pandas as pd
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time
 import warnings
@@ -135,7 +136,7 @@ DIM = 3
 
 NOISE_LEVELS = {
     'clean':      0.00,
-    'low_noise':  0.025,
+    'low_noise':  0.02,
     'high_noise': 0.05,
 }
 
@@ -203,7 +204,6 @@ class BudgetedObjective:
         self.n_calls     = 0
         self.best        = 0.0
         self.convergence = []   # best-so-far (cm) after each simulator call
-        self.all_evals   = []   # every individual evaluation height (cm)
 
     # ── Single noiseless call ────────────────────────────────────────────────
     def _single(self, theta):
@@ -218,7 +218,6 @@ class BudgetedObjective:
             h = max(h, 0.0)
         except Exception:
             h = 0.0
-        self.all_evals.append(h * 100)             # cm, every call
         if h > self.best:
             self.best = h
         self.convergence.append(self.best * 100)   # cm
@@ -501,7 +500,6 @@ def run_all(verbose=True):
                 'best_theta':  theta,
                 'best_height': h,
                 'convergence': conv,
-                'all_evals':   obj.all_evals,
                 'n_calls':     obj.n_calls,
             }
             print(f'  [{method_name}] best={h*100:.2f} cm  '
@@ -550,219 +548,127 @@ def print_results_table(results):
 #  PLOTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_results(results, save_dir='.', gt=None):
+def plot_results(results, save_path='optimization_comparison.png', gt=None):
     """
-    Produce three independent figures — one per noise level — each showing:
-      - A convergence curve (best-so-far vs evaluations) for BO, DE, and CMA-ES
-      - A horizontal dashed black line at the ground truth height
-      - A text annotation with each method's final best height
+    Two-panel figure:
+      Left  -- convergence curves (best-so-far vs eval number, all 9 runs)
+              + horizontal dashed line at ground truth height (if provided)
+      Right -- grouped bar chart of final best height per method x noise level
+              + horizontal dashed line at ground truth height (if provided)
 
-    Each figure is:
-      - Saved as a PNG to save_dir (e.g. convergence_clean.png)
-      - Displayed interactively via plt.show()
+    The x-axis of the convergence panel is the shared evaluation count, making
+    all curves directly comparable (standard fixed-budget plot convention).
 
     Parameters
     ----------
     results  : dict from run_all()
-    save_dir : str  directory to write PNG files (default: current directory)
+    save_path: str
     gt       : dict from find_ground_truth(), or None
     """
-    import os
-    os.makedirs(save_dir, exist_ok=True)
-
     methods    = ['BO', 'DE', 'CMA-ES']
     noise_labs = list(NOISE_LEVELS.keys())
     noise_sigs = list(NOISE_LEVELS.values())
 
-    # Shared y-axis ceiling across all three figures for easy visual comparison
-    all_heights = [
-        results[m][nl]['best_height'] * 100
-        for m in methods for nl in noise_labs
-    ]
-    if gt is not None:
-        all_heights.append(gt['height_cm'])
-    y_max = max(all_heights) * 1.18
-
-    saved_paths = []
-
-    for nl, sigma in zip(noise_labs, noise_sigs):
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-
-        # ── Scatter of all evaluations + best-so-far step line ───────────────
-        for method in methods:
-            all_evals = results[method][nl]['all_evals']   # every raw call (cm)
-            conv      = results[method][nl]['convergence'] # best-so-far (cm)
-            final_h   = results[method][nl]['best_height'] * 100
-            n         = len(conv)
-            evals_x   = np.arange(1, n + 1)
-
-            # Raw evaluation scatter (small, semi-transparent)
-            ax.scatter(
-                evals_x, all_evals[:n],
-                color  = COLORS[method],
-                alpha  = 0.25,
-                s      = 18,
-                zorder = 2,
-                label  = f'_nolegend_',   # keep out of legend
-            )
-
-            # Best-so-far step line with markers at each new best
-            # Use drawstyle='steps-post' so the line stays flat until improved
-            ax.plot(
-                evals_x, conv,
-                color     = COLORS[method],
-                linewidth = 2.2,
-                drawstyle = 'steps-post',
-                zorder    = 4,
-                label     = f'{method}  (best: {final_h:.1f} cm)',
-            )
-
-            # Dot only where best-so-far actually improved
-            improved_x, improved_y = [], []
-            current_best = -1.0
-            for xi, yi in zip(evals_x, conv):
-                if yi > current_best:
-                    improved_x.append(xi)
-                    improved_y.append(yi)
-                    current_best = yi
-            ax.scatter(
-                improved_x, improved_y,
-                color      = COLORS[method],
-                s          = 45,
-                zorder     = 5,
-                edgecolors = 'white',
-                linewidths = 0.8,
-            )
-
-        # ── Ground truth horizontal line ─────────────────────────────────────
-        # ── Ground truth horizontal line ─────────────────────────────────────
-        if gt is not None:
-            ax.axhline(
-                gt['height_cm'],
-                color='black', lw=2.0, ls='--', zorder=5,
-                label=f'Ground truth  ({gt["height_cm"]:.1f} cm)',
-            )
-            # Label on the right edge
-            ax.text(
-                EVAL_BUDGET * 1.005, gt['height_cm'],
-                f'{gt["height_cm"]:.1f} cm',
-                va='center', ha='left', fontsize=8.5,
-                color='black', fontweight='bold',
-            )
-
-        # ── Axes formatting ───────────────────────────────────────────────────
-        sigma_str = f'sigma = {sigma:.2f} rad' if sigma > 0 else 'no noise'
-        noise_title = nl.replace('_', ' ').title()
-        title_line1 = f'Convergence -- {noise_title}  ({sigma_str})'
-        # title_line2 = (f'Eval budget: {EVAL_BUDGET} per method  |  '
-        #                f'Torques fixed: ankle {TAU_MAX_ANKLE} Nm  '
-        #                f'knee {TAU_MAX_KNEE} Nm  hip {TAU_MAX_HIP} Nm')
-        # ax.set_title(title_line1 + '\n' + title_line2, fontsize=10, fontweight='bold')
-        ax.set_title(title_line1, fontsize=10, fontweight='bold')
-        ax.set_xlabel('Simulator evaluations', fontsize=11)
-        ax.set_ylabel('Best jump height so far (cm)', fontsize=11)
-        ax.set_xlim(1, EVAL_BUDGET * 1.01)
-        ax.set_ylim(0, y_max)
-        ax.legend(fontsize=10, loc='lower right', framealpha=0.9)
-        ax.grid(True, alpha=0.3)
-
-        # Vertical line at budget limit
-        ax.axvline(EVAL_BUDGET, color='grey', lw=0.9, ls=':', alpha=0.6)
-        ax.text(EVAL_BUDGET - 2, y_max * 0.02,
-                f'Budget\n({EVAL_BUDGET})',
-                ha='right', va='bottom', fontsize=7.5, color='grey')
-
-        plt.tight_layout()
-
-        # ── Save ─────────────────────────────────────────────────────────────
-        fname = os.path.join(save_dir, f'convergence_{nl}.png')
-        plt.savefig(fname, dpi=150, bbox_inches='tight')
-        saved_paths.append(fname)
-        print(f'  Saved: {fname}')
-
-        # ── Display ──────────────────────────────────────────────────────────
-        plt.show()
-        plt.close(fig)
-
-    return saved_paths
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  OPTIMIZATION COMPARISON PLOT  (bar chart only)
-# ─────────────────────────────────────────────────────────────────────────────
-
-def plot_optimization_comparison(results, save_path='optimization_comparison.png', gt=None):
-    """
-    Single-panel grouped bar chart of final best height per method × noise level.
-    """
-    import os
-    methods    = ['BO', 'DE', 'CMA-ES']
-    noise_labs = list(NOISE_LEVELS.keys())
-    noise_sigs = list(NOISE_LEVELS.values())
-
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, (ax_conv, ax_bar) = plt.subplots(1, 2, figsize=(16, 6))
     fig.suptitle(
-        f'3-Segment Jump Optimisation -- Fixed Budget ({EVAL_BUDGET} evals/method)',
-        # f'Torques fixed: ankle {TAU_MAX_ANKLE} N·m  '
-        # f'knee {TAU_MAX_KNEE} N·m  hip {TAU_MAX_HIP} N·m',
-        fontsize=11, fontweight='bold',
+        f'3-Segment Jump Optimisation -- Fixed Budget ({EVAL_BUDGET} evals/method)\n'
+        f'Torques fixed: ankle {TAU_MAX_ANKLE} N*m  '
+        f'knee {TAU_MAX_KNEE} N*m  hip {TAU_MAX_HIP} N*m',
+        fontsize=11, fontweight='bold', y=1.02
     )
 
+    # ── Left: convergence curves ─────────────────────────────────────────────
+    for method in methods:
+        for nl in noise_labs:
+            conv  = results[method][nl]['convergence']
+            evals = np.arange(1, len(conv) + 1)
+            ax_conv.plot(
+                evals, conv,
+                color     = COLORS[method],
+                linestyle = NOISE_LINESTYLE[nl],
+                linewidth = 1.8,
+                alpha     = NOISE_ALPHA[nl],
+                label     = f'{method} | {nl}',
+            )
+
+    # Ground truth line on convergence panel
+    if gt is not None:
+        ax_conv.axhline(
+            gt['height_cm'],
+            color='black', lw=1.8, ls='--', zorder=5,
+            label=f'Ground truth ({gt["height_cm"]:.1f} cm)'
+        )
+        ax_conv.annotate(
+            f'Ground truth\n{gt["height_cm"]:.1f} cm',
+            xy=(EVAL_BUDGET * 0.98, gt['height_cm']),
+            xytext=(-6, 6), textcoords='offset points',
+            ha='right', va='bottom', fontsize=8,
+            color='black', fontweight='bold',
+        )
+
+    ax_conv.set_xlabel('Simulator evaluations', fontsize=10)
+    ax_conv.set_ylabel('Best jump height so far (cm)', fontsize=10)
+    ax_conv.set_title('Convergence curves -- shared evaluation budget', fontsize=10)
+    ax_conv.set_xlim(1, EVAL_BUDGET)
+    ax_conv.axvline(EVAL_BUDGET, color='black', lw=0.8, ls=':', alpha=0.4)
+    ax_conv.legend(fontsize=8, ncol=1, loc='lower right')
+    ax_conv.grid(True, alpha=0.3)
+
+    # ── Right: bar chart ─────────────────────────────────────────────────────
     n_methods = len(methods)
     bar_w     = 0.22
     group_pos = np.arange(len(noise_labs))
-    offsets   = np.linspace(-(n_methods - 1) / 2,
-                             (n_methods - 1) / 2, n_methods) * bar_w
+    offsets   = np.linspace(-(n_methods-1)/2,
+                             (n_methods-1)/2, n_methods) * bar_w
 
     for mi, method in enumerate(methods):
         heights_cm = [results[method][nl]['best_height'] * 100
                       for nl in noise_labs]
         xpos = group_pos + offsets[mi]
-        bars = ax.bar(xpos, heights_cm, width=bar_w,
-                      color=COLORS[method], alpha=0.85,
-                      label=method, zorder=3,
-                      edgecolor='white', linewidth=0.6)
+        bars = ax_bar.bar(xpos, heights_cm, width=bar_w,
+                          color=COLORS[method], alpha=0.85,
+                          label=method, zorder=3,
+                          edgecolor='white', linewidth=0.6)
         for bar, hcm in zip(bars, heights_cm):
-            ax.text(
+            ax_bar.text(
                 bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + 0.4,
                 f'{hcm:.1f}',
                 ha='center', va='bottom',
-                fontsize=8, fontweight='bold', color=COLORS[method],
+                fontsize=8, fontweight='bold', color=COLORS[method]
             )
 
-    ax.set_xticks(group_pos)
-    ax.set_xticklabels(
-        [f'{nl}\n(σ = {s:.2f} rad)' for nl, s in zip(noise_labs, noise_sigs)],
-        fontsize=9,
+    ax_bar.set_xticks(group_pos)
+    ax_bar.set_xticklabels(
+        [f'{nl}\n(sigma={s:.2f} rad)' for nl, s in zip(noise_labs, noise_sigs)],
+        fontsize=9
     )
-    ax.set_ylabel('Best jump height (cm)', fontsize=10)
-    ax.set_title(f'Final best after {EVAL_BUDGET} evaluations', fontsize=10)
-    ax.grid(True, axis='y', alpha=0.3, zorder=0)
+    ax_bar.set_ylabel('Best jump height (cm)', fontsize=10)
+    ax_bar.set_title(f'Final best after {EVAL_BUDGET} evals', fontsize=10)
+    ax_bar.legend(fontsize=9)
+    ax_bar.grid(True, axis='y', alpha=0.3, zorder=0)
+    ax_bar.set_ylim(0, ax_bar.get_ylim()[1] * 1.13)
 
+    # Ground truth line on bar chart
     if gt is not None:
-        ax.axhline(
+        ax_bar.axhline(
             gt['height_cm'],
             color='black', lw=1.8, ls='--', zorder=6,
-            label=f'Ground truth ({gt["height_cm"]:.1f} cm)',
+            label=f'Ground truth ({gt["height_cm"]:.1f} cm)'
         )
-        ax.text(
-            ax.get_xlim()[1] * 0.99, gt['height_cm'],
-            f'GT: {gt["height_cm"]:.1f} cm',
+        ax_bar.legend(fontsize=9)
+        ax_bar.annotate(
+            f'Ground truth: {gt["height_cm"]:.1f} cm',
+            xy=(ax_bar.get_xlim()[1], gt['height_cm']),
+            xytext=(-6, 4), textcoords='offset points',
             ha='right', va='bottom', fontsize=8,
             color='black', fontweight='bold',
         )
 
-    ax.set_ylim(0, ax.get_ylim()[1] * 1.15)
-    ax.legend(fontsize=8, loc='upper left', framealpha=0.85,
-              ncol=1, handlelength=1.4, borderpad=0.5)
-
     plt.tight_layout()
     plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    print(f'  Saved: {save_path}')
-    plt.show()
-    plt.close(fig)
+    print(f'  Plot saved to: {save_path}')
+    plt.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -975,10 +881,6 @@ def save_results_csv(results, path='optimization_results.csv', gt=None):
 
 if __name__ == '__main__':
 
-    import random # Fix randomness
-    np.random.seed(42)
-    random.seed(42)
-
     print('=' * 68)
     print('  Multi-Method Jump Optimisation -- Fixed Evaluation Budget')
     print('=' * 68)
@@ -1012,8 +914,7 @@ if __name__ == '__main__':
 
     print_results_table(results)
     save_results_csv(results, 'optimization_results.csv', gt=gt)
-    plot_results(results, save_dir='.', gt=gt)
-    plot_optimization_comparison(results, 'optimization_comparison.png', gt=gt)
+    plot_results(results, 'optimization_comparison.png', gt=gt)
 
     # ── Best overall ─────────────────────────────────────────────────────────
     print('\n' + '-' * 68)
