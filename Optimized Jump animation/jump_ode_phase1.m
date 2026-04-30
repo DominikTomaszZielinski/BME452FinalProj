@@ -138,14 +138,11 @@ M = m1*(J1'*J1) + I1*(Jw1'*Jw1) + ...
 end
 
 
-function tau = compute_torques(t, ctrl)
-    k        = ctrl.k;
-    sig_on   = 1./(1+exp(-k.*(t - ctrl.t_on)));
-    sig_off  = 1./(1+exp(-k.*(t - (ctrl.t_on + ctrl.t_dur))));
+function tau = compute_torques(t, ctrl)  %#ok<INUSL>
+% Step function: full torque from t=0 to liftoff. t is unused.
     tau_sign = [-1; -1; 1];
-    tau      = tau_sign .* ctrl.tau_max .* (sig_on - sig_off);
+    tau      = tau_sign .* ctrl.tau_max;
 end
-
 
 function [x_com, y_com] = compute_com_position(X, params)
 a1=X(1); a2=X(1)+X(2); a3=X(1)+X(2)+X(3);

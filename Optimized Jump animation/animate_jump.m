@@ -65,6 +65,7 @@ opts1 = odeset(...
     'AbsTol',    1e-8, ...
     'Events',    @(t,X) liftoff_event(t, X, params, ctrl), ...
     'MaxStep',   1e-4);
+
 [t1, X1, te1, ~, ~] = ode15s(@(t,X) jump_ode_phase1(t, X, params, ctrl), ...
     t_span1, X0_p1, opts1);
 
@@ -72,6 +73,7 @@ if isempty(te1)
     error('Liftoff not detected. Check torques or initial conditions.');
 end
 fprintf('Liftoff at t = %.4f s\n', te1);
+
 
 % Liftoff & Phase 2 handoff 
 X_lo = X1(end,:)';
@@ -94,6 +96,13 @@ opts2 = odeset('RelTol',1e-8,'AbsTol',1e-10,...
 jump_height = max(X2(:,2)) - y_com_lo;
 fprintf('Jump height = %.4f m (%.2f cm)\n', jump_height, jump_height*100);
 
+fprintf('y_com at liftoff: %.4f m\n', y_com_lo);
+fprintf('vy_com at liftoff: %.4f m/s\n', vy_com_lo);
+fprintf('Peak absolute y_com: %.4f m\n', max(X2(:,2)));
+fprintf('Jump height (rise): %.4f m\n', max(X2(:,2)) - y_com_lo);
+
+fprintf('t2 range: %.4f to %.4f s\n', t2(1), t2(end));
+fprintf('All y_com values (first 5): %.4f %.4f %.4f %.4f %.4f\n', X2(1,2), X2(2,2), X2(3,2), X2(4,2), X2(5,2));
 
 %% 1b. PLOT INITIAL STANDING CONFIGURATION
 fig_init = figure('Name','Initial Squat Configuration','Color','w',...
