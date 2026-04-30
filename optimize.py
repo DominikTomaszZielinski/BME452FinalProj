@@ -135,7 +135,7 @@ DIM = 3
 
 NOISE_LEVELS = {
     'clean':      0.00,
-    'low_noise':  0.02,
+    'low_noise':  0.025,
     'high_noise': 0.05,
 }
 
@@ -689,6 +689,83 @@ def plot_results(results, save_dir='.', gt=None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  OPTIMIZATION COMPARISON PLOT  (bar chart only)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def plot_optimization_comparison(results, save_path='optimization_comparison.png', gt=None):
+    """
+    Single-panel grouped bar chart of final best height per method × noise level.
+    """
+    import os
+    methods    = ['BO', 'DE', 'CMA-ES']
+    noise_labs = list(NOISE_LEVELS.keys())
+    noise_sigs = list(NOISE_LEVELS.values())
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.suptitle(
+        f'3-Segment Jump Optimisation -- Fixed Budget ({EVAL_BUDGET} evals/method)',
+        # f'Torques fixed: ankle {TAU_MAX_ANKLE} N·m  '
+        # f'knee {TAU_MAX_KNEE} N·m  hip {TAU_MAX_HIP} N·m',
+        fontsize=11, fontweight='bold',
+    )
+
+    n_methods = len(methods)
+    bar_w     = 0.22
+    group_pos = np.arange(len(noise_labs))
+    offsets   = np.linspace(-(n_methods - 1) / 2,
+                             (n_methods - 1) / 2, n_methods) * bar_w
+
+    for mi, method in enumerate(methods):
+        heights_cm = [results[method][nl]['best_height'] * 100
+                      for nl in noise_labs]
+        xpos = group_pos + offsets[mi]
+        bars = ax.bar(xpos, heights_cm, width=bar_w,
+                      color=COLORS[method], alpha=0.85,
+                      label=method, zorder=3,
+                      edgecolor='white', linewidth=0.6)
+        for bar, hcm in zip(bars, heights_cm):
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.4,
+                f'{hcm:.1f}',
+                ha='center', va='bottom',
+                fontsize=8, fontweight='bold', color=COLORS[method],
+            )
+
+    ax.set_xticks(group_pos)
+    ax.set_xticklabels(
+        [f'{nl}\n(σ = {s:.2f} rad)' for nl, s in zip(noise_labs, noise_sigs)],
+        fontsize=9,
+    )
+    ax.set_ylabel('Best jump height (cm)', fontsize=10)
+    ax.set_title(f'Final best after {EVAL_BUDGET} evaluations', fontsize=10)
+    ax.grid(True, axis='y', alpha=0.3, zorder=0)
+
+    if gt is not None:
+        ax.axhline(
+            gt['height_cm'],
+            color='black', lw=1.8, ls='--', zorder=6,
+            label=f'Ground truth ({gt["height_cm"]:.1f} cm)',
+        )
+        ax.text(
+            ax.get_xlim()[1] * 0.99, gt['height_cm'],
+            f'GT: {gt["height_cm"]:.1f} cm',
+            ha='right', va='bottom', fontsize=8,
+            color='black', fontweight='bold',
+        )
+
+    ax.set_ylim(0, ax.get_ylim()[1] * 1.15)
+    ax.legend(fontsize=8, loc='upper left', framealpha=0.85,
+              ncol=1, handlelength=1.4, borderpad=0.5)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'  Saved: {save_path}')
+    plt.show()
+    plt.close(fig)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  GROUND TRUTH  (high-budget deterministic global search, no noise)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -936,6 +1013,7 @@ if __name__ == '__main__':
     print_results_table(results)
     save_results_csv(results, 'optimization_results.csv', gt=gt)
     plot_results(results, save_dir='.', gt=gt)
+    plot_optimization_comparison(results, 'optimization_comparison.png', gt=gt)
 
     # ── Best overall ─────────────────────────────────────────────────────────
     print('\n' + '-' * 68)
