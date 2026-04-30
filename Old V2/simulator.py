@@ -342,9 +342,10 @@ def simulate_jump(params_vec, p=None, return_trajectories=False, verbose=False):
             fun      = lambda t, X: jump_ode_phase1(t, X, p, tau_max),
             t_span   = (0.0, 1.0),
             y0       = X0_p1,
-            method   = 'RK45',
+            method   = 'RK45', # Can be Radau (Better, but more computationally expensive), or RK45 (Faster, but has less precision at more than 4 degrees)
             rtol     = 1e-6,
             atol     = 1e-8,
+            # max_step = 1e-4, # Unnecessary for RK45
             events   = liftoff_event,
         )
     except Exception as e:
@@ -389,8 +390,9 @@ def simulate_jump(params_vec, p=None, return_trajectories=False, verbose=False):
             t_span   = (te1, te1 + 2.0),
             y0       = X0_p2,
             method   = 'RK45',
-            rtol     = 1e-6,
-            atol     = 1e-8,
+            rtol     = 1e-8,
+            atol     = 1e-10,
+            max_step = 1e-3,
         )
     except Exception as e:
         if verbose:

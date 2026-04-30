@@ -66,6 +66,7 @@ Requirements:
 import numpy as np
 import pandas as pd
 import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import time
 import warnings
@@ -203,7 +204,6 @@ class BudgetedObjective:
         self.n_calls     = 0
         self.best        = 0.0
         self.convergence = []   # best-so-far (cm) after each simulator call
-        self.all_evals   = []   # every individual evaluation height (cm)
 
     # ── Single noiseless call ────────────────────────────────────────────────
     def _single(self, theta):
@@ -218,7 +218,6 @@ class BudgetedObjective:
             h = max(h, 0.0)
         except Exception:
             h = 0.0
-        self.all_evals.append(h * 100)             # cm, every call
         if h > self.best:
             self.best = h
         self.convergence.append(self.best * 100)   # cm
@@ -501,7 +500,6 @@ def run_all(verbose=True):
                 'best_theta':  theta,
                 'best_height': h,
                 'convergence': conv,
-                'all_evals':   obj.all_evals,
                 'n_calls':     obj.n_calls,
             }
             print(f'  [{method_name}] best={h*100:.2f} cm  '
@@ -550,142 +548,127 @@ def print_results_table(results):
 #  PLOTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def plot_results(results, save_dir='.', gt=None):
+def plot_results(results, save_path='optimization_comparison.png', gt=None):
     """
-    Produce three independent figures — one per noise level — each showing:
-      - A convergence curve (best-so-far vs evaluations) for BO, DE, and CMA-ES
-      - A horizontal dashed black line at the ground truth height
-      - A text annotation with each method's final best height
+    Two-panel figure:
+      Left  -- convergence curves (best-so-far vs eval number, all 9 runs)
+              + horizontal dashed line at ground truth height (if provided)
+      Right -- grouped bar chart of final best height per method x noise level
+              + horizontal dashed line at ground truth height (if provided)
 
-    Each figure is:
-      - Saved as a PNG to save_dir (e.g. convergence_clean.png)
-      - Displayed interactively via plt.show()
+    The x-axis of the convergence panel is the shared evaluation count, making
+    all curves directly comparable (standard fixed-budget plot convention).
 
     Parameters
     ----------
     results  : dict from run_all()
-    save_dir : str  directory to write PNG files (default: current directory)
+    save_path: str
     gt       : dict from find_ground_truth(), or None
     """
-    import os
-    os.makedirs(save_dir, exist_ok=True)
-
     methods    = ['BO', 'DE', 'CMA-ES']
     noise_labs = list(NOISE_LEVELS.keys())
     noise_sigs = list(NOISE_LEVELS.values())
 
-    # Shared y-axis ceiling across all three figures for easy visual comparison
-    all_heights = [
-        results[m][nl]['best_height'] * 100
-        for m in methods for nl in noise_labs
-    ]
-    if gt is not None:
-        all_heights.append(gt['height_cm'])
-    y_max = max(all_heights) * 1.18
+    fig, (ax_conv, ax_bar) = plt.subplots(1, 2, figsize=(16, 6))
+    fig.suptitle(
+        f'3-Segment Jump Optimisation -- Fixed Budget ({EVAL_BUDGET} evals/method)\n'
+        f'Torques fixed: ankle {TAU_MAX_ANKLE} N*m  '
+        f'knee {TAU_MAX_KNEE} N*m  hip {TAU_MAX_HIP} N*m',
+        fontsize=11, fontweight='bold', y=1.02
+    )
 
-    saved_paths = []
-
-    for nl, sigma in zip(noise_labs, noise_sigs):
-
-        fig, ax = plt.subplots(figsize=(9, 6))
-
-        # ── Scatter of all evaluations + best-so-far step line ───────────────
-        for method in methods:
-            all_evals = results[method][nl]['all_evals']   # every raw call (cm)
-            conv      = results[method][nl]['convergence'] # best-so-far (cm)
-            final_h   = results[method][nl]['best_height'] * 100
-            n         = len(conv)
-            evals_x   = np.arange(1, n + 1)
-
-            # Raw evaluation scatter (small, semi-transparent)
-            ax.scatter(
-                evals_x, all_evals[:n],
-                color  = COLORS[method],
-                alpha  = 0.25,
-                s      = 18,
-                zorder = 2,
-                label  = f'_nolegend_',   # keep out of legend
-            )
-
-            # Best-so-far step line with markers at each new best
-            # Use drawstyle='steps-post' so the line stays flat until improved
-            ax.plot(
-                evals_x, conv,
+    # ── Left: convergence curves ─────────────────────────────────────────────
+    for method in methods:
+        for nl in noise_labs:
+            conv  = results[method][nl]['convergence']
+            evals = np.arange(1, len(conv) + 1)
+            ax_conv.plot(
+                evals, conv,
                 color     = COLORS[method],
-                linewidth = 2.2,
-                drawstyle = 'steps-post',
-                zorder    = 4,
-                label     = f'{method}  (best: {final_h:.1f} cm)',
+                linestyle = NOISE_LINESTYLE[nl],
+                linewidth = 1.8,
+                alpha     = NOISE_ALPHA[nl],
+                label     = f'{method} | {nl}',
             )
 
-            # Dot only where best-so-far actually improved
-            improved_x, improved_y = [], []
-            current_best = -1.0
-            for xi, yi in zip(evals_x, conv):
-                if yi > current_best:
-                    improved_x.append(xi)
-                    improved_y.append(yi)
-                    current_best = yi
-            ax.scatter(
-                improved_x, improved_y,
-                color      = COLORS[method],
-                s          = 45,
-                zorder     = 5,
-                edgecolors = 'white',
-                linewidths = 0.8,
+    # Ground truth line on convergence panel
+    if gt is not None:
+        ax_conv.axhline(
+            gt['height_cm'],
+            color='black', lw=1.8, ls='--', zorder=5,
+            label=f'Ground truth ({gt["height_cm"]:.1f} cm)'
+        )
+        ax_conv.annotate(
+            f'Ground truth\n{gt["height_cm"]:.1f} cm',
+            xy=(EVAL_BUDGET * 0.98, gt['height_cm']),
+            xytext=(-6, 6), textcoords='offset points',
+            ha='right', va='bottom', fontsize=8,
+            color='black', fontweight='bold',
+        )
+
+    ax_conv.set_xlabel('Simulator evaluations', fontsize=10)
+    ax_conv.set_ylabel('Best jump height so far (cm)', fontsize=10)
+    ax_conv.set_title('Convergence curves -- shared evaluation budget', fontsize=10)
+    ax_conv.set_xlim(1, EVAL_BUDGET)
+    ax_conv.axvline(EVAL_BUDGET, color='black', lw=0.8, ls=':', alpha=0.4)
+    ax_conv.legend(fontsize=8, ncol=1, loc='lower right')
+    ax_conv.grid(True, alpha=0.3)
+
+    # ── Right: bar chart ─────────────────────────────────────────────────────
+    n_methods = len(methods)
+    bar_w     = 0.22
+    group_pos = np.arange(len(noise_labs))
+    offsets   = np.linspace(-(n_methods-1)/2,
+                             (n_methods-1)/2, n_methods) * bar_w
+
+    for mi, method in enumerate(methods):
+        heights_cm = [results[method][nl]['best_height'] * 100
+                      for nl in noise_labs]
+        xpos = group_pos + offsets[mi]
+        bars = ax_bar.bar(xpos, heights_cm, width=bar_w,
+                          color=COLORS[method], alpha=0.85,
+                          label=method, zorder=3,
+                          edgecolor='white', linewidth=0.6)
+        for bar, hcm in zip(bars, heights_cm):
+            ax_bar.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + 0.4,
+                f'{hcm:.1f}',
+                ha='center', va='bottom',
+                fontsize=8, fontweight='bold', color=COLORS[method]
             )
 
-        # ── Ground truth horizontal line ─────────────────────────────────────
-        # ── Ground truth horizontal line ─────────────────────────────────────
-        if gt is not None:
-            ax.axhline(
-                gt['height_cm'],
-                color='black', lw=2.0, ls='--', zorder=5,
-                label=f'Ground truth  ({gt["height_cm"]:.1f} cm)',
-            )
-            # Label on the right edge
-            ax.text(
-                EVAL_BUDGET * 1.005, gt['height_cm'],
-                f'{gt["height_cm"]:.1f} cm',
-                va='center', ha='left', fontsize=8.5,
-                color='black', fontweight='bold',
-            )
+    ax_bar.set_xticks(group_pos)
+    ax_bar.set_xticklabels(
+        [f'{nl}\n(sigma={s:.2f} rad)' for nl, s in zip(noise_labs, noise_sigs)],
+        fontsize=9
+    )
+    ax_bar.set_ylabel('Best jump height (cm)', fontsize=10)
+    ax_bar.set_title(f'Final best after {EVAL_BUDGET} evals', fontsize=10)
+    ax_bar.legend(fontsize=9)
+    ax_bar.grid(True, axis='y', alpha=0.3, zorder=0)
+    ax_bar.set_ylim(0, ax_bar.get_ylim()[1] * 1.13)
 
-        # ── Axes formatting ───────────────────────────────────────────────────
-        sigma_str = f'sigma = {sigma:.2f} rad' if sigma > 0 else 'no noise'
-        noise_title = nl.replace('_', ' ').title()
-        title_line1 = f'Convergence -- {noise_title}  ({sigma_str})'
-        # title_line2 = (f'Eval budget: {EVAL_BUDGET} per method  |  '
-        #                f'Torques fixed: ankle {TAU_MAX_ANKLE} Nm  '
-        #                f'knee {TAU_MAX_KNEE} Nm  hip {TAU_MAX_HIP} Nm')
-        # ax.set_title(title_line1 + '\n' + title_line2, fontsize=10, fontweight='bold')
-        ax.set_title(title_line1, fontsize=10, fontweight='bold')
-        ax.set_xlabel('Simulator evaluations', fontsize=11)
-        ax.set_ylabel('Best jump height so far (cm)', fontsize=11)
-        ax.set_xlim(1, EVAL_BUDGET * 1.01)
-        ax.set_ylim(0, y_max)
-        ax.legend(fontsize=10, loc='lower right', framealpha=0.9)
-        ax.grid(True, alpha=0.3)
+    # Ground truth line on bar chart
+    if gt is not None:
+        ax_bar.axhline(
+            gt['height_cm'],
+            color='black', lw=1.8, ls='--', zorder=6,
+            label=f'Ground truth ({gt["height_cm"]:.1f} cm)'
+        )
+        ax_bar.legend(fontsize=9)
+        ax_bar.annotate(
+            f'Ground truth: {gt["height_cm"]:.1f} cm',
+            xy=(ax_bar.get_xlim()[1], gt['height_cm']),
+            xytext=(-6, 4), textcoords='offset points',
+            ha='right', va='bottom', fontsize=8,
+            color='black', fontweight='bold',
+        )
 
-        # Vertical line at budget limit
-        ax.axvline(EVAL_BUDGET, color='grey', lw=0.9, ls=':', alpha=0.6)
-        ax.text(EVAL_BUDGET - 2, y_max * 0.02,
-                f'Budget\n({EVAL_BUDGET})',
-                ha='right', va='bottom', fontsize=7.5, color='grey')
-
-        plt.tight_layout()
-
-        # ── Save ─────────────────────────────────────────────────────────────
-        fname = os.path.join(save_dir, f'convergence_{nl}.png')
-        plt.savefig(fname, dpi=150, bbox_inches='tight')
-        saved_paths.append(fname)
-        print(f'  Saved: {fname}')
-
-        # ── Display ──────────────────────────────────────────────────────────
-        plt.show()
-        plt.close(fig)
-
-    return saved_paths
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    print(f'  Plot saved to: {save_path}')
+    plt.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -725,6 +708,7 @@ def find_ground_truth(p=None, verbose=True):
         'n_evals'    : int    -- total simulator calls used
         'solver_heights' : dict  -- best height per solver (for reporting)
     """
+    from scipy.optimize import dual_annealing, shgo
 
     if p is None:
         p = get_default_params()
@@ -741,89 +725,76 @@ def find_ground_truth(p=None, verbose=True):
             return 0.0
 
     solver_results = {}
-    solver_thetas  = {}
 
-    # ── 1. Differential Evolution — robust global search ──────────────────────
-    # popsize=15 gives 45 members; convergence typically within ~500 gens.
-    # tol=1e-6 + polish=True adds a final L-BFGS-B local refinement step.
+    # ── 1. Differential Evolution (high budget, with L-BFGS-B polish) ────────
     if verbose:
         print('\n  [Ground truth] Solver 1/3: Differential Evolution '
-              '(popsize=15, maxiter=500, polish=True) ...')
+              '(popsize=15, maxiter=500) ...')
     t0 = time.time()
     res_de = differential_evolution(
         neg_h, bounds,
-        popsize       = 15,
-        maxiter       = 500,
-        seed          = 0,
-        tol           = 1e-6,
-        mutation      = (0.5, 1.0),
-        recombination = 0.9,
-        strategy      = 'best1bin',
-        polish        = True,
+        popsize      = 15,      # 15 * 3 = 45 members
+        maxiter      = 500,     # up to 22 500 evals
+        seed         = 0,
+        tol          = 1e-8,
+        mutation     = (0.5, 1.0),
+        recombination= 0.9,
+        strategy     = 'best1bin',
+        polish       = True,    # L-BFGS-B local refinement at end
     )
     solver_results['DE'] = -res_de.fun
-    solver_thetas['DE']  = res_de.x
     if verbose:
-        print(f'    DE:   {-res_de.fun*100:.3f} cm  '
+        print(f'    DE:    {-res_de.fun*100:.3f} cm  '
               f'({time.time()-t0:.1f}s, {total_evals[0]} evals so far)')
 
-    # ── 2. DE with different seed/strategy — independent cross-check ──────────
-    # Using a different random seed and currenttobest1bin strategy gives an
-    # independent search trajectory that confirms (or improves on) result 1.
-    # dual_annealing was removed because even with no_local_search=True it
-    # spawns internal gradient calls that make it slow on simulator objectives.
+    # ── 2. dual_annealing ─────────────────────────────────────────────────────
     if verbose:
-        print('  [Ground truth] Solver 2/3: Differential Evolution '
-              '(seed=1, strategy=currenttobest1bin) ...')
+        print('  [Ground truth] Solver 2/3: dual_annealing (maxiter=10 000) ...')
     t0 = time.time()
-    res_de2 = differential_evolution(
+    res_da = dual_annealing(
         neg_h, bounds,
-        popsize       = 15,
-        maxiter       = 500,
-        seed          = 1,          # different seed -> independent trajectory
-        tol           = 1e-6,
-        mutation      = (0.4, 0.9),
-        recombination = 0.95,
-        strategy      = 'currenttobest1bin',  # different strategy
-        polish        = True,
+        maxiter  = 10_000,
+        seed     = 0,
+        minimizer_kwargs={'method': 'L-BFGS-B', 'bounds': bounds},
     )
-    solver_results['DE2'] = -res_de2.fun
-    solver_thetas['DE2']  = res_de2.x
+    solver_results['dual_annealing'] = -res_da.fun
     if verbose:
-        print(f'    DE2:  {-res_de2.fun*100:.3f} cm  '
+        print(f'    DA:    {-res_da.fun*100:.3f} cm  '
               f'({time.time()-t0:.1f}s, {total_evals[0]} evals so far)')
 
-    # ── 3. Multi-start L-BFGS-B — precise local refinement ───────────────────
-    # Start from 50 random points across the search space and run a fast
-    # gradient-free L-BFGS-B polish from each.  This is cheap (~50-200 evals
-    # total) and catches any sharp peaks that global methods might step over.
-    from scipy.optimize import minimize
+    # ── 3. shgo ───────────────────────────────────────────────────────────────
     if verbose:
-        print('  [Ground truth] Solver 3/3: Multi-start L-BFGS-B (50 starts) ...')
+        print('  [Ground truth] Solver 3/3: shgo (n=256 sampling points) ...')
     t0 = time.time()
-    rng = np.random.RandomState(0)
-    ms_best_h, ms_best_x = 0.0, res_de.x.copy()
-    for _ in range(50):
-        x0 = LOWER_BOUNDS + rng.rand(DIM) * (UPPER_BOUNDS - LOWER_BOUNDS)
-        try:
-            res_ms = minimize(neg_h, x0, method='L-BFGS-B', bounds=bounds,
-                              options={'maxiter': 100, 'ftol': 1e-9})
-            h_ms = -res_ms.fun
-            if h_ms > ms_best_h:
-                ms_best_h = h_ms
-                ms_best_x = res_ms.x
-        except Exception:
-            pass
-    solver_results['multistart'] = ms_best_h
-    solver_thetas['multistart']  = ms_best_x
-    if verbose:
-        print(f'    MS:   {ms_best_h*100:.3f} cm  '
-              f'({time.time()-t0:.1f}s, {total_evals[0]} evals so far)')
+    try:
+        res_shgo = shgo(
+            neg_h, bounds,
+            n           = 256,
+            iters       = 3,
+            sampling_method = 'simplicial',
+            minimizer_kwargs={'method': 'L-BFGS-B'},
+        )
+        solver_results['shgo'] = -res_shgo.fun
+        if verbose:
+            print(f'    shgo:  {-res_shgo.fun*100:.3f} cm  '
+                  f'({time.time()-t0:.1f}s, {total_evals[0]} evals so far)')
+    except Exception as e:
+        if verbose:
+            print(f'    shgo failed ({e}) -- skipping.')
+        solver_results['shgo'] = 0.0
 
-    # ── Pick best across all three solvers ────────────────────────────────────
+    # ── Pick best across solvers ───────────────────────────────────────────────
     best_solver = max(solver_results, key=solver_results.get)
     best_height = solver_results[best_solver]
-    best_theta  = solver_thetas[best_solver]
+
+    # Recover the theta for the best solver
+    candidates = {
+        'DE':            (res_de.x,                   solver_results['DE']),
+        'dual_annealing':(res_da.x,                   solver_results['dual_annealing']),
+        'shgo':          (res_shgo.x if 'res_shgo' in dir() else res_de.x,
+                          solver_results['shgo']),
+    }
+    best_theta = candidates[best_solver][0]
 
     gt = {
         'height_cm':      best_height * 100,
@@ -841,10 +812,8 @@ def find_ground_truth(p=None, verbose=True):
               f'theta2={best_theta[1]:.4f}  '
               f'theta3={best_theta[2]:.4f} rad')
         print(f'  [Ground truth] Total evals : {total_evals[0]}')
-        solver_str = '  '.join(
-            f'{k}={v:.2f}cm' for k, v in gt['solver_heights'].items()
-        )
-        print(f'  [Ground truth] All solvers : {solver_str}')
+        print(f'  [Ground truth] All solvers : '
+              + '  '.join(f'{k}={v:.2f}cm' for k, v in gt["solver_heights"].items()))
 
     return gt
 
@@ -898,10 +867,6 @@ def save_results_csv(results, path='optimization_results.csv', gt=None):
 
 if __name__ == '__main__':
 
-    import random # Fix randomness
-    np.random.seed(42)
-    random.seed(42)
-
     print('=' * 68)
     print('  Multi-Method Jump Optimisation -- Fixed Evaluation Budget')
     print('=' * 68)
@@ -935,7 +900,7 @@ if __name__ == '__main__':
 
     print_results_table(results)
     save_results_csv(results, 'optimization_results.csv', gt=gt)
-    plot_results(results, save_dir='.', gt=gt)
+    plot_results(results, 'optimization_comparison.png', gt=gt)
 
     # ── Best overall ─────────────────────────────────────────────────────────
     print('\n' + '-' * 68)
