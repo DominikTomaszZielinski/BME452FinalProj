@@ -17,3 +17,11 @@ Do not make it a hump. Turn things on maximally. Timing you keep it, and just go
 Turn it on maximum, and then you have an assumed strength limit.
 
 Steps. Take out start and time length, and have muscles set to maximal. Also take out gradual muscle strength increases, and instead make it a step increase. Then optimize for starting position.
+
+argpMax
+You have 2 parameters, and then you make a plot of P1, P2, and plot them across certain values
+
+It is not interesting how far something can go, unless there is some sort of jeopardy. Might go negative for a bit, but then you push it forward. Allow for countermovement by allowing multiple time steps. Rate limit is a constraint on the optimization. P1 cannot be this high as it started at 0, and P1 can only be so high due to the rate limit.
+Constraint optimization: 3 ways. 1. Do not let the parameters vary. Subtract a lil bit from utility or add to cost function if the parameters go
+
+f min is the simplest optimizer. If you want to constrain values, fmincon
