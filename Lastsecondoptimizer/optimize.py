@@ -114,8 +114,8 @@ EVAL_BUDGET = 150        # total simulator calls per method per noise round
 #           (slight underrun is intentional; DE also runs an init generation)
 #   CMA-ES: no fixed maxiter -- hard-stopped by budget counter
 
-BO_N_INITIAL = 30
-BO_N_ITER    = EVAL_BUDGET - BO_N_INITIAL   # 120
+BO_N_INITIAL = 10
+BO_N_ITER    = EVAL_BUDGET - BO_N_INITIAL   # 140
 
 DE_POPSIZE   = 4
 DE_MAXITER   = EVAL_BUDGET // (DE_POPSIZE * 3)   # floor(150/12) = 12
